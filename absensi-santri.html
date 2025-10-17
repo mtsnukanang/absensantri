@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi Absensi Santri</title>
+    <!-- Memuat Tailwind CSS untuk styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Memuat jsQR untuk pemindaian QR Code -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <style>
+        /* CSS Kustom untuk Tampilan Kamera */
+        #video-container {
+            position: relative;
+            width: 100%;
+            /* Menjaga aspek rasio 4:3 */
+            padding-top: 75%; 
+        }
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Efek cermin agar mudah diposisikan */
+        }
+        /* Kotak pemindaian di tengah kamera */
+        #scan-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 60%;
+            height: 40%;
+            border: 4px solid rgba(255, 255, 255, 0.9);
+            border-radius: 16px;
+            box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.4);
+        }
+        .spinner {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen font-sans">
+    <div class="container mx-auto p-4 max-w-lg w-full">
+        <!-- Kartu Aplikasi Utama -->
+        <div class="bg-white rounded-2xl shadow-xl p-5 sm:p-8">
+            <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Absensi Santri</h1>
+            <p class="text-center text-gray-500 mb-6">Scan QR Code untuk mencatat kehadiran</p>
+
+            <!-- Area Pesan untuk Pengguna -->
+            <div id="message" class="text-center p-3.5 rounded-lg mb-4 text-white font-semibold transition-all duration-300">
+                <!-- Pesan akan ditampilkan di sini -->
+            </div>
+            
+            <div id="loading" class="hidden items-center justify-center mb-4">
+                 <div class="spinner w-6 h-6 border-4 border-gray-200 rounded-full"></div>
+                 <p class="ml-3 text-gray-600">Mengecek lokasi Anda...</p>
+            </div>
+
+            <!-- Kontainer Kamera dan Pemindai -->
+            <div id="scanner-container" class="hidden mb-4">
+                <div id="video-container" class="bg-gray-900 rounded-lg overflow-hidden relative">
+                    <video id="video" playsinline></video>
+                    <div id="scan-box"></div>
+                </div>
+                <canvas id="canvas" class="hidden"></canvas>
+            </div>
+
+            <!-- Tombol Kontrol -->
+            <button id="startButton" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 transition-transform transform active:scale-95 duration-200">
+                Mulai Absen
+            </button>
+
+            <!-- Riwayat Absensi -->
+            <div class="mt-8">
+                <h2 class="text-xl font-semibold text-gray-700 mb-3 border-b pb-2">Riwayat Absen Hari Ini</h2>
+                <div id="log" class="space-y-3 max-h-60 overflow-y-auto pr-2">
+                    <p id="no-log" class="text-gray-500 text-center py-4">Belum ada data absen.</p>
+                    <!-- Data absen akan ditambahkan di sini -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- PENGATURAN APLIKASI (DIAMBIL DARI LOCALSTORAGE) ---
+        const PONDOK_LATITUDE = parseFloat(localStorage.getItem('pondokLatitude')) || -6.1753924; // Default: Monas
+        const PONDOK_LONGITUDE = parseFloat(localStorage.getItem('pondokLongitude')) || 106.8271528; // Default: Monas
+        const MAX_DISTANCE_METERS = parseInt(localStorage.getItem('maxDistance')) || 200; // Default: 200m
+        const santriData = JSON.parse(localStorage.getItem('santriData')) || {
+            'SNT-001': 'Ahmad Fauzi (Contoh)',
+            'SNT-002': 'Fatimah Az-Zahra (Contoh)',
+            'SNT-003': 'Yusuf Abdullah (Contoh)',
+            'SNT-004': 'Zainab Aliyah (Contoh)',
+        };
+        // --- AKHIR PENGATURAN ---
+
+        // Referensi elemen DOM
+        const video = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const canvas = canvasElement.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const messageElement = document.getElementById('message');
+        const logElement = document.getElementById('log');
+        const noLogElement = document.getElementById('no-log');
+        const scannerContainer = document.getElementById('scanner-container');
+        const loadingElement = document.getElementById('loading');
+
+        // Variabel status
+        let isScanning = false;
+        let videoStream = null;
+        
+        // Fungsi untuk mendapatkan key log hari ini
+        function getTodayLogKey() {
+            const today = new Date();
+            // Format: attendanceLog_YYYY-MM-DD
+            return `attendanceLog_${today.toISOString().split('T')[0]}`;
+        }
+
+        // Memuat log untuk hari ini dari localStorage
+        const attendanceLog = new Map(JSON.parse(localStorage.getItem(getTodayLogKey())) || []);
+        
+        // Fungsi untuk menyimpan log ke localStorage
+        function saveLog() {
+            localStorage.setItem(getTodayLogKey(), JSON.stringify(Array.from(attendanceLog.entries())));
+        }
+
+
+        // Fungsi untuk menampilkan pesan
+        function showMessage(text, type) {
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                info: 'bg-blue-500',
+                warning: 'bg-yellow-500'
+            };
+            messageElement.textContent = text;
+            messageElement.className = `text-center p-3.5 rounded-lg mb-4 text-white font-semibold ${colors[type] || colors.info}`;
+        }
+        
+        // Fungsi untuk menghitung jarak antara dua titik koordinat (Haversine Formula)
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Radius bumi dalam meter
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            return R * c; // dalam meter
+        }
+
+        // Fungsi untuk memeriksa lokasi pengguna
+        function checkLocation() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    reject('Geolocation tidak didukung oleh browser ini.');
+                    return;
+                }
+                loadingElement.classList.remove('hidden');
+                loadingElement.classList.add('flex');
+                
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        loadingElement.classList.add('hidden');
+                        loadingElement.classList.remove('flex');
+                        const userLat = position.coords.latitude;
+                        const userLon = position.coords.longitude;
+
+                        const distance = getDistance(PONDOK_LATITUDE, PONDOK_LONGITUDE, userLat, userLon);
+                        
+                        if (distance <= MAX_DISTANCE_METERS) {
+                            resolve(true);
+                        } else {
+                            // Kirim jarak agar bisa ditampilkan di pesan error
+                            resolve({ inArea: false, distance: distance.toFixed(0) });
+                        }
+                    },
+                    (error) => {
+                        loadingElement.classList.add('hidden');
+                        loadingElement.classList.remove('flex');
+                        let errorMessage = 'Gagal mendapatkan lokasi. ';
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMessage += "Anda menolak permintaan lokasi.";
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMessage += "Informasi lokasi tidak tersedia.";
+                                break;
+                            case error.TIMEOUT:
+                                errorMessage += "Permintaan lokasi timeout.";
+                                break;
+                            default:
+                                errorMessage += "Terjadi kesalahan tidak diketahui.";
+                                break;
+                        }
+                        reject(errorMessage);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            });
+        }
+        
+        // Fungsi untuk memproses data absen
+        async function processAttendance(santriId) {
+            isScanning = false; // Hentikan pemindaian sementara
+
+            if (!santriData[santriId]) {
+                showMessage(`QR Code tidak valid (${santriId})`, 'error');
+                setTimeout(() => { isScanning = true; scanLoop(); }, 2000);
+                return;
+            }
+            
+            if (attendanceLog.has(santriId)) {
+                showMessage(`${santriData[santriId]} sudah absen hari ini.`, 'warning');
+                setTimeout(() => { isScanning = true; scanLoop(); }, 2000);
+                return;
+            }
+
+            try {
+                const locationStatus = await checkLocation();
+                if (locationStatus.inArea === false) {
+                     showMessage(`Anda ~${locationStatus.distance}m di luar area. Absen ditolak.`, 'error');
+                    setTimeout(() => { isScanning = true; scanLoop(); }, 2000);
+                    return;
+                }
+            } catch (error) {
+                showMessage(error, 'error');
+                setTimeout(() => { isScanning = true; scanLoop(); }, 2000);
+                return;
+            }
+
+            const timestamp = new Date();
+            const timeString = timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            // Simpan data absen ke Map
+            attendanceLog.set(santriId, { name: santriData[santriId], time: timeString });
+            saveLog(); // Simpan ke localStorage
+            updateLog(santriId, santriData[santriId], timeString);
+            
+            showMessage(`Absen berhasil: ${santriData[santriId]}`, 'success');
+
+            setTimeout(() => {
+                showMessage('Arahkan QR Code ke kamera', 'info');
+                isScanning = true; 
+                scanLoop(); 
+            }, 2000);
+        }
+        
+        // Fungsi untuk memperbarui riwayat absen di UI
+        function updateLog(santriId, name, time) {
+            if (noLogElement) noLogElement.style.display = 'none';
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = 'bg-gray-50 p-3 rounded-lg flex justify-between items-center';
+            logEntry.innerHTML = `
+                <div>
+                    <p class="font-semibold text-gray-800">${name}</p>
+                    <p class="text-sm text-gray-500">${santriId}</p>
+                </div>
+                <p class="font-medium text-indigo-600">${time}</p>
+            `;
+            logElement.prepend(logEntry);
+        }
+
+        // Fungsi untuk menampilkan log yang sudah ada saat halaman dimuat
+        function renderInitialLog() {
+            if (attendanceLog.size > 0) {
+                noLogElement.style.display = 'none';
+                logElement.innerHTML = ''; // Kosongkan dulu
+                attendanceLog.forEach((value, key) => {
+                    updateLog(key, value.name, value.time);
+                });
+            }
+        }
+
+
+        // Loop pemindaian QR Code
+        function scanLoop() {
+            if (isScanning && video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvasElement.height = video.videoHeight;
+                canvasElement.width = video.videoWidth;
+                canvas.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+                const imageData = canvas.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "dontInvert",
+                });
+
+                if (code) {
+                    processAttendance(code.data);
+                }
+            }
+            if (isScanning) {
+                requestAnimationFrame(scanLoop);
+            }
+        }
+
+        // Fungsi untuk memulai pemindai
+        async function startScanner() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                video.srcObject = stream;
+                videoStream = stream;
+                video.onloadedmetadata = () => {
+                    video.play();
+                    isScanning = true;
+                    scannerContainer.classList.remove('hidden');
+                    startButton.textContent = 'Hentikan Absen';
+                    showMessage('Arahkan QR Code ke kamera', 'info');
+                    scanLoop();
+                };
+            } catch (err) {
+                console.error("Error accessing camera: ", err);
+                showMessage('Tidak bisa mengakses kamera.', 'error');
+            }
+        }
+
+        // Fungsi untuk menghentikan pemindai
+        function stopScanner() {
+            isScanning = false;
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+            }
+            scannerContainer.classList.add('hidden');
+            startButton.textContent = 'Mulai Absen';
+            showMessage('Absen dihentikan.', 'info');
+        }
+
+        // Event listener untuk tombol utama
+        startButton.addEventListener('click', () => {
+            if (isScanning) {
+                stopScanner();
+            } else {
+                startScanner();
+            }
+        });
+        
+        // Inisialisasi awal
+        showMessage('Klik "Mulai Absen" untuk memulai', 'info');
+        renderInitialLog();
+
+    </script>
+</body>
+</html>
+
