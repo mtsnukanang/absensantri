@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Absensi Santri</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <!-- Kontainer Login -->
+    <div id="login-container" class="min-h-screen flex items-center justify-center">
+        <div class="bg-white p-8 rounded-2xl shadow-lg max-w-sm w-full">
+            <h2 class="text-2xl font-bold text-center text-gray-800 mb-6">Login Admin</h2>
+            <form id="login-form">
+                <div class="mb-4">
+                    <label for="username" class="block text-gray-700 text-sm font-bold mb-2">Username</label>
+                    <input type="text" id="username" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500" value="admin">
+                </div>
+                <div class="mb-6">
+                    <label for="password" class="block text-gray-700 text-sm font-bold mb-2">Password</label>
+                    <input type="password" id="password" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500" value="admin123">
+                </div>
+                <p id="login-error" class="text-red-500 text-xs italic mb-4 hidden">Username atau password salah.</p>
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition-transform transform active:scale-95 duration-200">
+                    Masuk
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Panel Admin (Tersembunyi Awalnya) -->
+    <div id="admin-panel" class="hidden container mx-auto p-4 sm:p-6">
+        <div class="flex justify-between items-center mb-6">
+             <h1 class="text-3xl font-bold text-gray-800">Dasbor Admin</h1>
+             <button id="logout-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Keluar</button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Pengaturan Lokasi -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-xl font-bold mb-4 text-gray-700">Pengaturan Lokasi Absen</h2>
+                <form id="location-form" class="space-y-4">
+                    <div>
+                        <label for="latitude" class="block text-sm font-medium text-gray-600">Latitude</label>
+                        <input type="number" step="any" id="latitude" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label for="longitude" class="block text-sm font-medium text-gray-600">Longitude</label>
+                        <input type="number" step="any" id="longitude" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label for="distance" class="block text-sm font-medium text-gray-600">Jarak Maksimal (meter)</label>
+                        <input type="number" id="distance" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg">Simpan Pengaturan Lokasi</button>
+                </form>
+            </div>
+
+            <!-- Kelola Data Santri -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-xl font-bold mb-4 text-gray-700">Kelola Data Santri</h2>
+                <form id="santri-form" class="flex gap-2 mb-4">
+                    <input type="text" id="santri-id" placeholder="ID Santri (misal: SNT-005)" class="flex-grow block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" required>
+                    <input type="text" id="santri-name" placeholder="Nama Lengkap" class="flex-grow block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" required>
+                    <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg">Tambah</button>
+                </form>
+                <div id="santri-list" class="space-y-2 max-h-64 overflow-y-auto">
+                    <!-- Daftar santri akan muncul di sini -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- Riwayat Absen Hari Ini -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg mt-6">
+            <h2 class="text-xl font-bold mb-4 text-gray-700">Riwayat Absen Hari Ini</h2>
+            <div id="attendance-log" class="space-y-3 max-h-96 overflow-y-auto">
+                 <p class="text-gray-500 text-center py-4">Belum ada data absen hari ini.</p>
+                <!-- Log absensi akan muncul di sini -->
+            </div>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const loginContainer = document.getElementById('login-container');
+    const adminPanel = document.getElementById('admin-panel');
+    const loginForm = document.getElementById('login-form');
+    const loginError = document.getElementById('login-error');
+    const logoutButton = document.getElementById('logout-button');
+    
+    // --- FUNGSI UTAMA ---
+    
+    // Cek status login dari session storage
+    function checkLoginStatus() {
+        if (sessionStorage.getItem('isAdminLoggedIn') === 'true') {
+            showAdminPanel();
+        } else {
+            showLogin();
+        }
+    }
+
+    function showAdminPanel() {
+        loginContainer.classList.add('hidden');
+        adminPanel.classList.remove('hidden');
+        loadSettings();
+        loadSantri();
+        loadAttendanceLog();
+    }
+
+    function showLogin() {
+        loginContainer.classList.remove('hidden');
+        adminPanel.classList.add('hidden');
+        sessionStorage.removeItem('isAdminLoggedIn');
+    }
+
+    // --- MANAJEMEN DATA (localStorage) ---
+
+    function loadSettings() {
+        document.getElementById('latitude').value = localStorage.getItem('pondokLatitude') || '';
+        document.getElementById('longitude').value = localStorage.getItem('pondokLongitude') || '';
+        document.getElementById('distance').value = localStorage.getItem('maxDistance') || '';
+    }
+
+    function saveSettings(e) {
+        e.preventDefault();
+        const lat = document.getElementById('latitude').value;
+        const lon = document.getElementById('longitude').value;
+        const dist = document.getElementById('distance').value;
+        if(lat && lon && dist){
+            localStorage.setItem('pondokLatitude', lat);
+            localStorage.setItem('pondokLongitude', lon);
+            localStorage.setItem('maxDistance', dist);
+            alert('Pengaturan lokasi berhasil disimpan!');
+        } else {
+            alert('Harap isi semua field lokasi!');
+        }
+    }
+
+    function getSantriData() {
+        return JSON.parse(localStorage.getItem('santriData')) || {};
+    }
+
+    function saveSantriData(data) {
+        localStorage.setItem('santriData', JSON.stringify(data));
+        loadSantri();
+    }
+
+    function loadSantri() {
+        const santriList = document.getElementById('santri-list');
+        const data = getSantriData();
+        santriList.innerHTML = ''; // Kosongkan daftar
+        const ids = Object.keys(data);
+
+        if(ids.length === 0) {
+            santriList.innerHTML = '<p class="text-gray-500 text-center">Belum ada data santri.</p>';
+            return;
+        }
+
+        ids.forEach(id => {
+            const div = document.createElement('div');
+            div.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-lg';
+            div.innerHTML = `
+                <div>
+                    <p class="font-semibold text-gray-800">${data[id]}</p>
+                    <p class="text-sm text-gray-500">${id}</p>
+                </div>
+                <button data-id="${id}" class="delete-santri-btn bg-red-100 text-red-600 hover:bg-red-200 text-xs font-bold py-1 px-2 rounded">Hapus</button>
+            `;
+            santriList.appendChild(div);
+        });
+    }
+
+    function addSantri(e) {
+        e.preventDefault();
+        const id = document.getElementById('santri-id').value.trim();
+        const name = document.getElementById('santri-name').value.trim();
+        if (id && name) {
+            const data = getSantriData();
+            if(data[id]){
+                alert('ID Santri sudah ada!');
+                return;
+            }
+            data[id] = name;
+            saveSantriData(data);
+            e.target.reset(); // Reset form
+        }
+    }
+    
+    function deleteSantri(id) {
+        if(confirm(`Apakah Anda yakin ingin menghapus santri dengan ID: ${id}?`)){
+            const data = getSantriData();
+            delete data[id];
+            saveSantriData(data);
+        }
+    }
+    
+    function loadAttendanceLog() {
+        const logContainer = document.getElementById('attendance-log');
+        const today = new Date().toISOString().split('T')[0];
+        const logKey = `attendanceLog_${today}`;
+        const logData = new Map(JSON.parse(localStorage.getItem(logKey)) || []);
+        
+        logContainer.innerHTML = '';
+        if (logData.size === 0) {
+            logContainer.innerHTML = '<p class="text-gray-500 text-center py-4">Belum ada data absen hari ini.</p>';
+            return;
+        }
+        
+        logData.forEach((value, key) => {
+            const logEntry = document.createElement('div');
+            logEntry.className = 'bg-gray-50 p-3 rounded-lg flex justify-between items-center';
+            logEntry.innerHTML = `
+                <div>
+                    <p class="font-semibold text-gray-800">${value.name}</p>
+                    <p class="text-sm text-gray-500">${key}</p>
+                </div>
+                <p class="font-medium text-indigo-600">${value.time}</p>
+            `;
+            logContainer.prepend(logEntry); // Tampilkan yang terbaru di atas
+        });
+    }
+
+
+    // --- EVENT LISTENERS ---
+
+    loginForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const user = document.getElementById('username').value;
+        const pass = document.getElementById('password').value;
+        // Ganti dengan sistem otentikasi yang lebih aman jika perlu
+        if (user === 'admin' && pass === 'admin123') {
+            sessionStorage.setItem('isAdminLoggedIn', 'true');
+            checkLoginStatus();
+        } else {
+            loginError.classList.remove('hidden');
+        }
+    });
+
+    logoutButton.addEventListener('click', showLogin);
+    
+    document.getElementById('location-form').addEventListener('submit', saveSettings);
+    document.getElementById('santri-form').addEventListener('submit', addSantri);
+    
+    document.getElementById('santri-list').addEventListener('click', (e) => {
+        if (e.target && e.target.classList.contains('delete-santri-btn')) {
+            deleteSantri(e.target.dataset.id);
+        }
+    });
+
+    // --- INISIALISASI ---
+    checkLoginStatus();
+});
+</script>
+
+</body>
+</html>
